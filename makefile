@@ -84,8 +84,8 @@ build: clean gapps
 	@mkdir -p $(BUILD_DIR)/$(PROJECT_NAME)
 	
 	# Create main application files
-	@echo "Creating application files..."
-  @sudo apt install unzip
+	@echo "Creating application files..."  
+	@sudo apt install unzip
 	@$(foreach file,$(MAIN_APPS),echo "$($(file))" > $(BUILD_DIR)/$(PROJECT_NAME)/$(file);)
 	
 	# Create widget files
@@ -138,10 +138,10 @@ clean:
 gapps:
 	@mkdir -p $(BUILD_DIR)/$(PROJECT_NAME)/gapps
 	@echo "Downloading Google Play Services components..."
-	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GoogleServicesFramework.apk https://github.com/opengapps/arm/releases/download/20230801/GoogleServicesFramework-11.0-20230801.apk
-	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GoogleAccountManager.apk https://github.com/opengapps/arm/releases/download/20230801/GoogleAccountManager-11.0-20230801.apk
-	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GooglePlayServices.apk https://github.com/opengapps/arm/releases/download/20230801/GooglePlayServices-11.0-20230801.apk
-	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GooglePlayStore.apk https://github.com/opengapps/arm/releases/download/20230801/GooglePlayStore-11.0-20230801.apk
+	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GoogleServicesFramework.apk https://www.apkmirror.com/wp-content/themes/APKMirror/download.php?id=9674570&key=d6c27f25d8f82d21b78ad6afcd856cce92dd5d2d
+	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GoogleAccountManager.apk https://www.apkmirror.com/wp-content/themes/APKMirror/download.php?id=8839568&key=e6c0dd335e8131113ea1d0be095d7c7bb66c8121
+	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GooglePlayServices.apk https://www.apkmirror.com/wp-content/themes/APKMirror/download.php?id=9848461&key=ca67a0e36f1fd044cf1695090ba67092217163ca&forcebaseapk=true
+	@wget -q -O $(BUILD_DIR)/$(PROJECT_NAME)/gapps/GooglePlayStore.apk https://www.apkmirror.com/wp-content/themes/APKMirror/download.php?id=9929626&key=d762ddb909a9f6b612d668fa7eab6fe733f72516&forcebaseapk=true
 	@echo "Google Play Services components downloaded"
 
 # ============================================================
