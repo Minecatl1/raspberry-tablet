@@ -682,7 +682,7 @@ class UpdateManagerApp(App):
         self.check_btn.text = "Checking..."
         
         try:
-            response = requests.get("https://api.github.com/repos/yourusername/pi-tablet-os/releases/latest")
+            response = requests.get("https://api.github.com/repos/minecatl1/pi-tablet-os/releases/latest")
             if response.status_code == 200:
                 latest_release = response.json()
                 self.latest_version = latest_release["tag_name"]
@@ -1111,19 +1111,481 @@ class CameraApp(App):
 endef
 
 # Bluetooth Manager
+# Update the Bluetooth App in the Makefile
 define bluetooth_app.py
 import subprocess
+import re
+import threading
+import time
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.popup import Popup
+from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
+from kivy.clock import Clock
+from kivy.core.window import Window
+from kivy.properties import BooleanProperty, StringProperty
+from notification_manager import Notification, NotificationManager
+
+class BluetoothDevice(BoxLayout):
+    name = StringProperty("Unknown Device")
+    mac = StringProperty("00:00:00:00:00:00")
+    connected = BooleanProperty(False)
+    paired = BooleanProperty(False)
+    
+    def __init__(self, name, mac, connected=False, paired=False, **kwargs):
+        super().__init__(**kwargs)
+        self.orientation = 'horizontal'
+        self.size_hint_y = None
+        self.height = 60
+        self.spacing = 10
+        self.padding = [10, 5]
+        
+        self.name = name
+        self.mac = mac
+        self.connected = connected
+        self.paired = paired
+        
+        # Device info
+        info_layout = BoxLayout(orientation='vertical')
+        info_layout.add_widget(Label(text=self.name, halign='left', font_size=16))
+        info_layout.add_widget(Label(text=self.mac, halign='left', font_size=12, color=(0.7, 0.7, 0.7, 1)))
+        self.add_widget(info_layout)
+        
+        # Status indicator
+        status = Label(
+            text="Connected" if connected else "Paired" if paired else "Available",
+            color=(0, 1, 0, 1) if connected else (0.8, 0.8, 0.8, 1),
+            size_hint_x=0.3
+        self.add_widget(status)
+        
+        # Action buttons
+        btn_layout = BoxLayout(size_hint_x=0.4, spacing=5)
+        
+        if not paired:
+            self.pair_btn = Button(text="Pair", size_hint_x=0.5)
+            self.pair_btn.bind(on_press=self.pair_device)
+            btn_layout.add_widget(self.pair_btn)
+        else:
+            if not connected:
+                self.connect_btn = Button(text="Connect", size_hint_x=0.5)
+                self.connect_btn.bind(on_press=self.connect_device)
+                btn_layout.add_widget(self.connect_btn)
+            else:
+                self.disconnect_btn = Button(text="Disconnect", size_hint_x=0.5)
+                self.disconnect_btn.bind(on_press=self.disconnect_device)
+                btn_layout.add_widget(self.disconnect_btn)
+            
+            self.remove_btn = Button(text="Remove", size_hint_x=0.5)
+            self.remove_btn.bind(on_press=self.remove_device)
+            btn_layout.add_widget(self.remove_btn)
+        
+        self.add_widget(btn_layout)
+    
+    def pair_device(self, instance):
+        app = App.get_running_app()
+        app.pair_device(self.mac)
+    
+    def connect_device(self, instance):
+        app = App.get_running_app()
+        app.connect_device(self.mac)
+    
+    def disconnect_device(self, instance):
+        app = App.get_running_app()
+        app.disconnect_device(self.mac)
+    
+    def remove_device(self, instance):
+        app = App.get_running_app()
+        app.remove_device(self.mac)
 
 class BluetoothApp(App):
     def build(self):
-        # Implementation would go here
-        pass
+        Window.fullscreen = 'auto'
+        self.scanning = False
+        self.devices = {}
+        
+        layout = BoxLayout(orientation='vertical')
+        
+        # Title bar
+        title_bar = BoxLayout(size_hint_y=0.1)
+        title_bar.add_widget(Label(text="Bluetooth Manager", font_size=24))
+        
+        # Bluetooth toggle
+        self.bt_toggle = ToggleButton(
+            text="Bluetooth: ON",
+            state='down',
+            size_hint_x=0.3
+        self.bt_toggle.bind(state=self.toggle_bluetooth)
+        title_bar.add_widget(self.bt_toggle)
+        
+        # Scan button
+        self.scan_btn = Button(text="Scan Devices", size_hint_x=0.3)
+        self.scan_btn.bind(on_press=self.toggle_scan)
+        title_bar.add_widget(self.scan_btn)
+        layout.add_widget(title_bar)
+        
+        # Device list
+        self.scroll = ScrollView()
+        self.device_list = GridLayout(cols=1, spacing=10, padding=10, size_hint_y=None)
+        self.device_list.bind(minimum_height=self.device_list.setter('height'))
+        self.scroll.add_widget(self.device_list)
+        layout.add_widget(self.scroll)
+        
+        # Status label
+        self.status = Label(text="Ready", size_hint_y=0.1)
+        layout.add_widget(self.status)
+        
+        # Start with Bluetooth on
+        self.turn_bluetooth_on()
+        
+        # Start scanning thread
+        self.scan_thread = threading.Thread(target=self.scan_devices, daemon=True)
+        self.scan_thread.start()
+        
+        # Load paired devices
+        Clock.schedule_once(lambda dt: self.load_paired_devices(), 1)
+        
+        return layout
+    
+    def toggle_bluetooth(self, instance, state):
+        if state == 'down':
+            self.turn_bluetooth_on()
+        else:
+            self.turn_bluetooth_off()
+    
+    def turn_bluetooth_on(self):
+        subprocess.run(["sudo", "bluetoothctl", "power", "on"])
+        self.bt_toggle.text = "Bluetooth: ON"
+        self.status.text = "Bluetooth powered on"
+        
+        # Send notification
+        notif = Notification(
+            title="Bluetooth Enabled",
+            content="Bluetooth is now turned on",
+            app_name="Bluetooth Manager",
+            priority=1,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def turn_bluetooth_off(self):
+        subprocess.run(["sudo", "bluetoothctl", "power", "off"])
+        self.bt_toggle.text = "Bluetooth: OFF"
+        self.status.text = "Bluetooth powered off"
+        
+        # Clear device list
+        self.device_list.clear_widgets()
+        self.devices = {}
+        
+        # Send notification
+        notif = Notification(
+            title="Bluetooth Disabled",
+            content="Bluetooth is now turned off",
+            app_name="Bluetooth Manager",
+            priority=1,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def toggle_scan(self, instance):
+        if self.scanning:
+            self.scanning = False
+            self.scan_btn.text = "Scan Devices"
+            self.status.text = "Scan stopped"
+        else:
+            self.scanning = True
+            self.scan_btn.text = "Stop Scan"
+            self.status.text = "Scanning for devices..."
+    
+    def scan_devices(self):
+        while True:
+            if self.scanning and self.bt_toggle.state == 'down':
+                # Start discovery
+                subprocess.run(["sudo", "bluetoothctl", "scan", "on"])
+                
+                # Get devices
+                result = subprocess.run(
+                    ["sudo", "bluetoothctl", "devices"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                # Parse devices
+                device_lines = result.stdout.splitlines()
+                for line in device_lines:
+                    if "Device" in line:
+                        parts = line.split(" ", 2)
+                        if len(parts) >= 3:
+                            mac = parts[1]
+                            name = parts[2]
+                            
+                            # Check if already paired
+                            paired = self.is_device_paired(mac)
+                            
+                            # Check connection status
+                            connected = self.is_device_connected(mac)
+                            
+                            if mac not in self.devices:
+                                device = BluetoothDevice(name, mac, connected, paired)
+                                self.devices[mac] = device
+                                Clock.schedule_once(lambda dt, d=device: self.device_list.add_widget(d))
+                            else:
+                                # Update existing device
+                                self.devices[mac].name = name
+                                self.devices[mac].connected = connected
+                                self.devices[mac].paired = paired
+                
+                # Sleep before next scan
+                time.sleep(10)
+            else:
+                time.sleep(1)
+    
+    def is_device_paired(self, mac):
+        result = subprocess.run(
+            ["sudo", "bluetoothctl", "info", mac],
+            capture_output=True,
+            text=True
+        )
+        return "Paired: yes" in result.stdout
+    
+    def is_device_connected(self, mac):
+        result = subprocess.run(
+            ["sudo", "bluetoothctl", "info", mac],
+            capture_output=True,
+            text=True
+        )
+        return "Connected: yes" in result.stdout
+    
+    def load_paired_devices(self):
+        result = subprocess.run(
+            ["sudo", "bluetoothctl", "paired-devices"],
+            capture_output=True,
+            text=True
+        )
+        
+        device_lines = result.stdout.splitlines()
+        for line in device_lines:
+            if "Device" in line:
+                parts = line.split(" ", 2)
+                if len(parts) >= 3:
+                    mac = parts[1]
+                    name = parts[2]
+                    connected = self.is_device_connected(mac)
+                    
+                    if mac not in self.devices:
+                        device = BluetoothDevice(name, mac, connected, True)
+                        self.devices[mac] = device
+                        self.device_list.add_widget(device)
+    
+    def pair_device(self, mac):
+        self.status.text = f"Pairing with {mac}..."
+        
+        def pairing_thread():
+            try:
+                # Start pairing process
+                process = subprocess.Popen(
+                    ["sudo", "bluetoothctl", "pair", mac],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                
+                # Wait for completion or timeout
+                for _ in range(20):  # 20 seconds timeout
+                    line = process.stdout.readline()
+                    if "Pairing successful" in line:
+                        Clock.schedule_once(lambda dt: self.on_pair_success(mac))
+                        return
+                    time.sleep(1)
+                
+                # If we get here, pairing failed
+                Clock.schedule_once(lambda dt: self.on_pair_failure(mac))
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self.status.text(f"Pairing error: {str(e)}"))
+        
+        threading.Thread(target=pairing_thread, daemon=True).start()
+    
+    def on_pair_success(self, mac):
+        self.status.text = f"Paired with {mac}"
+        if mac in self.devices:
+            self.devices[mac].paired = True
+        
+        # Send notification
+        notif = Notification(
+            title="Device Paired",
+            content=f"Successfully paired with {self.devices[mac].name}",
+            app_name="Bluetooth Manager",
+            priority=1,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def on_pair_failure(self, mac):
+        self.status.text = f"Failed to pair with {mac}"
+        
+        # Send notification
+        notif = Notification(
+            title="Pairing Failed",
+            content=f"Could not pair with {self.devices[mac].name}",
+            app_name="Bluetooth Manager",
+            priority=2,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def connect_device(self, mac):
+        self.status.text = f"Connecting to {mac}..."
+        
+        def connect_thread():
+            try:
+                process = subprocess.Popen(
+                    ["sudo", "bluetoothctl", "connect", mac],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                
+                # Wait for connection
+                for _ in range(10):  # 10 seconds timeout
+                    line = process.stdout.readline()
+                    if "Connection successful" in line:
+                        Clock.schedule_once(lambda dt: self.on_connect_success(mac))
+                        return
+                    time.sleep(1)
+                
+                # Connection failed
+                Clock.schedule_once(lambda dt: self.on_connect_failure(mac))
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self.status.text(f"Connection error: {str(e)}"))
+        
+        threading.Thread(target=connect_thread, daemon=True).start()
+    
+    def on_connect_success(self, mac):
+        self.status.text = f"Connected to {mac}"
+        if mac in self.devices:
+            self.devices[mac].connected = True
+        
+        # Send notification
+        notif = Notification(
+            title="Device Connected",
+            content=f"Connected to {self.devices[mac].name}",
+            app_name="Bluetooth Manager",
+            priority=1,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def on_connect_failure(self, mac):
+        self.status.text = f"Failed to connect to {mac}"
+        
+        # Send notification
+        notif = Notification(
+            title="Connection Failed",
+            content=f"Could not connect to {self.devices[mac].name}",
+            app_name="Bluetooth Manager",
+            priority=2,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def disconnect_device(self, mac):
+        self.status.text = f"Disconnecting from {mac}..."
+        
+        def disconnect_thread():
+            try:
+                subprocess.run(
+                    ["sudo", "bluetoothctl", "disconnect", mac],
+                    check=True
+                )
+                Clock.schedule_once(lambda dt: self.on_disconnect_success(mac))
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self.on_disconnect_failure(mac, str(e)))
+        
+        threading.Thread(target=disconnect_thread, daemon=True).start()
+    
+    def on_disconnect_success(self, mac):
+        self.status.text = f"Disconnected from {mac}"
+        if mac in self.devices:
+            self.devices[mac].connected = False
+        
+        # Send notification
+        notif = Notification(
+            title="Device Disconnected",
+            content=f"Disconnected from {self.devices[mac].name}",
+            app_name="Bluetooth Manager",
+            priority=1,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def on_disconnect_failure(self, mac, error):
+        self.status.text = f"Failed to disconnect: {error}"
+        
+        # Send notification
+        notif = Notification(
+            title="Disconnect Failed",
+            content=f"Could not disconnect from {self.devices[mac].name}",
+            app_name="Bluetooth Manager",
+            priority=2,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def remove_device(self, mac):
+        self.status.text = f"Removing {mac}..."
+        
+        def remove_thread():
+            try:
+                subprocess.run(
+                    ["sudo", "bluetoothctl", "remove", mac],
+                    check=True
+                )
+                Clock.schedule_once(lambda dt: self.on_remove_success(mac))
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self.on_remove_failure(mac, str(e)))
+        
+        threading.Thread(target=remove_thread, daemon=True).start()
+    
+    def on_remove_success(self, mac):
+        self.status.text = f"Removed {mac}"
+        if mac in self.devices:
+            Clock.schedule_once(lambda dt: self.device_list.remove_widget(self.devices[mac]))
+            del self.devices[mac]
+        
+        # Send notification
+        notif = Notification(
+            title="Device Removed",
+            content=f"Bluetooth device removed",
+            app_name="Bluetooth Manager",
+            priority=1,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def on_remove_failure(self, mac, error):
+        self.status.text = f"Failed to remove: {error}"
+        
+        # Send notification
+        notif = Notification(
+            title="Remove Failed",
+            content=f"Could not remove device",
+            app_name="Bluetooth Manager",
+            priority=2,
+            icon="bluetooth.png"
+        )
+        NotificationManager().add(notif)
+    
+    def on_stop(self):
+        # Stop scanning when app closes
+        self.scanning = False
+        subprocess.run(["sudo", "bluetoothctl", "scan", "off"])
+
+if __name__ == "__main__":
+    BluetoothApp().run()
 endef
 
 # Streaming Hub
